@@ -39,6 +39,8 @@ struct RecorderToggleButton: View {
 
 struct RecorderRecordButton: View {
     let recordingState: RecordingState
+    /// Optional color for the processing state (the default is neutral white).
+    var processingTint: Color? = nil
     let action: () -> Void
 
     private var visualState: VisualState {
@@ -103,6 +105,13 @@ struct RecorderRecordButton: View {
                 mark: .white
             )
         case .processing:
+            if let processingTint {
+                return StateColors(
+                    surface: processingTint.opacity(0.35),
+                    border: processingTint.opacity(0.55),
+                    mark: Color.white.opacity(0.9)
+                )
+            }
             return StateColors(
                 surface: Color.white.opacity(0.13),
                 border: Color.white.opacity(0.18),
@@ -342,20 +351,32 @@ struct RecorderStatusDisplay: View {
     let currentState: RecordingState
     let audioMeterProvider: () -> AudioMeter
     let menuBarHeight: CGFloat?
+    let scrollingWaveform: Bool
 
     init(
         currentState: RecordingState,
         audioMeterProvider: @escaping () -> AudioMeter,
-        menuBarHeight: CGFloat? = nil
+        menuBarHeight: CGFloat? = nil,
+        scrollingWaveform: Bool = false
     ) {
         self.currentState = currentState
         self.audioMeterProvider = audioMeterProvider
         self.menuBarHeight = menuBarHeight
+        self.scrollingWaveform = scrollingWaveform
     }
 
     var body: some View {
         Group {
-            if currentState == .enhancing {
+            if scrollingWaveform {
+                // One instance for the whole dictation: the row keeps streaming and settles to
+                // dashes once recording stops (the button spinner and glow show processing).
+                ScrollingWaveform(
+                    audioMeterProvider: audioMeterProvider,
+                    color: .white,
+                    isActive: currentState == .recording
+                )
+                    .transition(.opacity)
+            } else if currentState == .enhancing {
                 ProcessingStatusDisplay(mode: .enhancing, color: .white).transition(.opacity)
             } else if currentState == .transcribing {
                 ProcessingStatusDisplay(mode: .transcribing, color: .white).transition(.opacity)
