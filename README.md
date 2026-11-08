@@ -54,6 +54,15 @@ brew install --cask voiceink
 ### Build from Source
 As an open-source project, you can build VoiceInk yourself by following the instructions in [BUILDING.md](BUILDING.md). However, the compiled version includes additional benefits like automatic updates, priority support via Discord and email, and helps fund ongoing development.
 
+### Automatic builds (this fork)
+Every push to `ui-polish` builds a signed `VoiceInk.app` on GitHub Actions ([Build ui-polish](.github/workflows/build-ui-polish.yml)). The newest build is the artifact `VoiceInk-ui-polish`:
+
+```shell
+gh run download -R eric1932/VoiceInk -n VoiceInk-ui-polish -D /tmp/voiceink-ci
+```
+
+Signing uses the Apple Development certificate from the secrets `APPLE_DEV_CERT_P12_BASE64` and `APPLE_DEV_CERT_PASSWORD`; without them the build is ad-hoc signed. Setup, installing, and the optional upstream sync are in [.github/FORK_CI.md](.github/FORK_CI.md).
+
 ## Requirements
 
 - macOS 15.0 or later

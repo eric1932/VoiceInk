@@ -1,0 +1,270 @@
+# Fork-only CI helper (see .github/FORK_CI.md). Builds VoiceInk.app exactly like `make local` on a Mac:
+# whisper.xcframework in ~/VoiceInk-Dependencies, then `make local` (Release, LocalBuild.xcconfig,
+# LOCAL_BUILD flag, VoiceInk.local.entitlements). Signs with the Apple Development certificate passed in,
+# or ad-hoc with a warning when none is given.
+name: Build VoiceInk.app
+description: Build and sign VoiceInk.app the way `make local` does, with a cached whisper.xcframework.
+
+inputs:
+  whisper-cpp-ref:
+    description: >
+      whisper.cpp commit, tag or branch to build the xcframework from. The cache is keyed by the commit
+      this resolves to. Pinned to a commit known to work with VoiceInk; bump it deliberately
+      (or pass "master" to follow whisper.cpp, which rebuilds the framework whenever master moves).
+    required: false
+    default: f92e1e4d1056700c39d4e86c1140f0a088fe1ab6
+  certificate-p12-base64:
+    description: Base64 of an exported Apple Development identity (.p12 with certificate and private key).
+    required: false
+    default: ''
+  certificate-password:
+    description: Password of that .p12.
+    required: false
+    default: ''
+  xcode-version:
+    description: Xcode to select, e.g. "26.6" for /Applications/Xcode_26.6.app. Empty keeps the runner default.
+    required: false
+    default: ''
+  min-macos-sdk:
+    description: Fail early unless the macOS SDK major version is at least this (glassEffect needs 26).
+    required: false
+    default: '26'
+
+outputs:
+  dist-dir:
+    description: Directory holding the zipped app and BUILD-INFO.txt, ready to upload.
+    value: ${{ steps.package.outputs.dist-dir }}
+  zip-path:
+    description: The ditto zip of VoiceInk.app.
+    value: ${{ steps.package.outputs.zip-path }}
+  signing:
+    description: '"apple-development" or "ad-hoc".'
+    value: ${{ steps.signing.outputs.signing }}
+
+runs:
+  using: composite
+  steps:
+    - name: Check toolchain
+      id: toolchain
+      shell: bash
+      env:
+        XCODE_VERSION: ${{ inputs.xcode-version }}
+        MIN_SDK: ${{ inputs.min-macos-sdk }}
+      run: |
+        set -euo pipefail
+        if [ -n "$XCODE_VERSION" ]; then
+          XCODE_APP="/Applications/Xcode_${XCODE_VERSION}.app"
+          if [ ! -d "$XCODE_APP" ]; then
+            echo "::error title=Xcode not found::$XCODE_APP is not on this runner. Installed: $(ls -d /Applications/Xcode*.app | xargs -n1 basename | tr '\n' ' ')"
+            exit 1
+          fi
+          sudo xcode-select -s "$XCODE_APP"
+        fi
+        xcodebuild -version
+        SDK_VERSION="$(xcrun --sdk macosx --show-sdk-version)"
+        echo "macOS SDK: $SDK_VERSION"
+        if [ "${SDK_VERSION%%.*}" -lt "$MIN_SDK" ]; then
+          echo "::error title=macOS SDK too old::SDK $SDK_VERSION < $MIN_SDK. VoiceInk uses glassEffect (macOS 26 SDK); use a macos-26 or newer runner."
+          exit 1
+        fi
+        # mlx-swift compiles Metal shaders; Xcode 26+ ships the Metal toolchain as a separate component.
+        if ! xcodebuild -showComponent MetalToolchain 2>/dev/null | grep -q "Status: installed"; then
+          echo "Metal toolchain missing, downloading it..."
+          xcodebuild -downloadComponent MetalToolchain
+        fi
+        command -v cmake >/dev/null || brew install cmake
+        echo "xcode-build=$(xcodebuild -version | awk '/Build version/ { print $3 }')" >> "$GITHUB_OUTPUT"
+
+    - name: Resolve whisper.cpp commit
+      id: whisper
+      shell: bash
+      env:
+        WHISPER_REF: ${{ inputs.whisper-cpp-ref }}
+        WHISPER_URL: https://github.com/ggml-org/whisper.cpp.git
+      run: |
+        set -euo pipefail
+        if [[ "$WHISPER_REF" =~ ^[0-9a-f]{40}$ ]]; then
+          SHA="$WHISPER_REF"
+        else
+          # Prefer the peeled commit of an annotated tag, then a branch or lightweight tag.
+          SHA="$(git ls-remote "$WHISPER_URL" "refs/tags/${WHISPER_REF}^{}" | awk 'NR==1 { print $1 }')"
+          [ -n "$SHA" ] || SHA="$(git ls-remote "$WHISPER_URL" "refs/heads/$WHISPER_REF" "refs/tags/$WHISPER_REF" | awk 'NR==1 { print $1 }')"
+        fi
+        if [ -z "$SHA" ]; then
+          echo "::error title=Unknown whisper.cpp ref::Could not resolve '$WHISPER_REF' in $WHISPER_URL"
+          exit 1
+        fi
+        echo "whisper.cpp $WHISPER_REF -> $SHA"
+        echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+        echo "url=$WHISPER_URL" >> "$GITHUB_OUTPUT"
+
+    - name: Restore whisper.xcframework
+      id: whisper-cache
+      uses: actions/cache/restore@v6
+      with:
+        path: ~/VoiceInk-Dependencies/whisper.cpp/build-apple/whisper.xcframework
+        key: whisper-xcframework-${{ runner.os }}-${{ runner.arch }}-xcode-${{ steps.toolchain.outputs.xcode-build }}-${{ steps.whisper.outputs.sha }}
+
+    - name: Build whisper.xcframework (cache miss)
+      if: steps.whisper-cache.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        WHISPER_SHA: ${{ steps.whisper.outputs.sha }}
+        WHISPER_URL: ${{ steps.whisper.outputs.url }}
+      run: |
+        set -euo pipefail
+        DIR="$HOME/VoiceInk-Dependencies/whisper.cpp"
+        rm -rf "$DIR" && mkdir -p "$DIR" && cd "$DIR"
+        git init -q
+        git remote add origin "$WHISPER_URL"
+        git fetch -q --depth 1 origin "$WHISPER_SHA"
+        git checkout -q FETCH_HEAD
+        ./build-xcframework.sh
+        test -d build-apple/whisper.xcframework
+
+    # Saved right away (not in a post step) so a later app build failure doesn't throw the framework away.
+    - name: Save whisper.xcframework
+      if: steps.whisper-cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v6
+      with:
+        path: ~/VoiceInk-Dependencies/whisper.cpp/build-apple/whisper.xcframework
+        key: ${{ steps.whisper-cache.outputs.cache-primary-key }}
+
+    - name: Import signing certificate
+      id: signing
+      shell: bash
+      env:
+        P12_BASE64: ${{ inputs.certificate-p12-base64 }}
+        P12_PASSWORD: ${{ inputs.certificate-password }}
+      run: |
+        set -euo pipefail
+        if [ -z "$P12_BASE64" ]; then
+          echo "::warning title=Ad-hoc signed build::Secret APPLE_DEV_CERT_P12_BASE64 is not set, so this VoiceInk.app is ad-hoc signed. macOS treats every ad-hoc build as a new app: Accessibility, Microphone and Keychain access have to be granted again after each install. Add the certificate as described in .github/FORK_CI.md."
+          echo "identity=-" >> "$GITHUB_OUTPUT"
+          echo "signing=ad-hoc" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
+        KEYCHAIN="$RUNNER_TEMP/voiceink-signing.keychain-db"
+        KEYCHAIN_PASSWORD="$(openssl rand -hex 24)"
+        echo "::add-mask::$KEYCHAIN_PASSWORD"
+        P12="$RUNNER_TEMP/voiceink-signing.p12"
+        trap 'rm -f "$P12"' EXIT
+        printf '%s' "$P12_BASE64" | base64 --decode > "$P12"
+
+        security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+        security set-keychain-settings -lut 21600 "$KEYCHAIN"
+        security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+        if ! security import "$P12" -k "$KEYCHAIN" -f pkcs12 -P "$P12_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security; then
+          echo "::error title=Certificate import failed::Could not import the .p12 from APPLE_DEV_CERT_P12_BASE64. Check APPLE_DEV_CERT_PASSWORD and that the secret holds base64 of the whole .p12."
+          exit 1
+        fi
+        # Apple Development certificates chain to the WWDR G3 intermediate; codesign needs it to build the chain.
+        if curl -fsSL --retry 3 -o "$RUNNER_TEMP/AppleWWDRCAG3.cer" https://www.apple.com/certificateauthority/AppleWWDRCAG3.cer; then
+          security import "$RUNNER_TEMP/AppleWWDRCAG3.cer" -k "$KEYCHAIN" >/dev/null 2>&1 || true
+        else
+          echo "::warning::Could not download the Apple WWDR G3 intermediate; relying on the runner's copy."
+        fi
+        security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null
+        # Put the temporary keychain first in the search list, keeping the runner's own keychains.
+        EXISTING=()
+        while IFS= read -r kc; do EXISTING+=("$kc"); done < <(security list-keychains -d user | sed -E 's/^[[:space:]]*"(.*)"$/\1/')
+        security list-keychains -d user -s "$KEYCHAIN" "${EXISTING[@]}"
+
+        MATCHES="$(security find-identity -v -p codesigning "$KEYCHAIN" | grep '"Apple Development: ' || true)"
+        COUNT="$(printf '%s' "$MATCHES" | grep -c . || true)"
+        if [ "$COUNT" != "1" ]; then
+          echo "::error title=No usable Apple Development identity::Expected exactly one valid Apple Development identity in the .p12, found $COUNT. Export the certificate together with its private key (see .github/FORK_CI.md)."
+          security find-identity -v -p codesigning "$KEYCHAIN" | sed -E 's/"Apple Development: [^"]*"/"Apple Development: ***"/' || true
+          exit 1
+        fi
+        HASH="$(printf '%s\n' "$MATCHES" | awk '{ print $2 }')"
+        NAME="$(printf '%s\n' "$MATCHES" | sed -E 's/.*"Apple Development: ([^"]*) \(([A-Z0-9]+)\)".*/\1/')"
+        # The certificate name is the Apple ID email; keep it out of the public logs.
+        [ -n "$NAME" ] && echo "::add-mask::$NAME"
+        echo "Imported Apple Development identity $HASH"
+        echo "identity=$HASH" >> "$GITHUB_OUTPUT"
+        echo "signing=apple-development" >> "$GITHUB_OUTPUT"
+        echo "keychain=$KEYCHAIN" >> "$GITHUB_OUTPUT"
+
+    - name: make local
+      shell: bash
+      env:
+        IDENTITY: ${{ steps.signing.outputs.identity }}
+      run: |
+        set -euo pipefail
+        echo "Signing identity: $IDENTITY ($([ "$IDENTITY" = "-" ] && echo ad-hoc || echo Apple Development))"
+        if ! make local LOCAL_CODESIGN_IDENTITY="$IDENTITY" 2>&1 | tee "$RUNNER_TEMP/make-local.log" | xcbeautify --renderer github-actions; then
+          echo "::group::Last 200 lines of the raw build log"
+          tail -n 200 "$RUNNER_TEMP/make-local.log"
+          echo "::endgroup::"
+          exit 1
+        fi
+
+    - name: Verify signature
+      shell: bash
+      env:
+        SIGNING: ${{ steps.signing.outputs.signing }}
+      run: |
+        set -euo pipefail
+        APP=".local-build/Build/Products/Release/VoiceInk.app"
+        codesign --verify --deep --strict --verbose=2 "$APP"
+        INFO="$(codesign -dv --verbose=2 "$APP" 2>&1)"
+        printf '%s\n' "$INFO" | grep -E '^(Identifier|Format|Signature|TeamIdentifier|Authority)=' || true
+        TEAM="$(printf '%s\n' "$INFO" | awk -F= '/^TeamIdentifier=/ { print $2 }')"
+        if [ "$SIGNING" = "apple-development" ] && { [ -z "$TEAM" ] || [ "$TEAM" = "not set" ]; }; then
+          echo "::error title=Not signed with the certificate::A certificate was imported but the app has no team identifier."
+          exit 1
+        fi
+        echo "Entitlements:"
+        codesign -d --entitlements - --xml "$APP" 2>/dev/null | plutil -p - || true
+
+    - name: Package
+      id: package
+      shell: bash
+      env:
+        SIGNING: ${{ steps.signing.outputs.signing }}
+        WHISPER_SHA: ${{ steps.whisper.outputs.sha }}
+      run: |
+        set -euo pipefail
+        APP=".local-build/Build/Products/Release/VoiceInk.app"
+        VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Contents/Info.plist")"
+        BUILD="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP/Contents/Info.plist")"
+        SHORT="$(git rev-parse --short=8 HEAD)"
+        DIST="$RUNNER_TEMP/dist"
+        rm -rf "$DIST" && mkdir -p "$DIST"
+        ZIP="$DIST/VoiceInk-$VERSION-$SHORT.zip"
+        # ditto keeps the bundle's symlinks and permissions; a plain artifact upload would break the signature.
+        ditto -c -k --sequesterRsrc --keepParent "$APP" "$ZIP"
+        {
+          echo "VoiceInk $VERSION ($BUILD)"
+          echo "commit:   $(git rev-parse HEAD) ($(git log -1 --format=%s))"
+          echo "ref:      ${GITHUB_REF_NAME:-}"
+          echo "signing:  $SIGNING"
+          echo "xcode:    $(xcodebuild -version | tr '\n' ' ')"
+          echo "sdk:      macOS $(xcrun --sdk macosx --show-sdk-version)"
+          echo "whisper:  $WHISPER_SHA"
+          echo "run:      ${GITHUB_SERVER_URL:-}/${GITHUB_REPOSITORY:-}/actions/runs/${GITHUB_RUN_ID:-}"
+        } > "$DIST/BUILD-INFO.txt"
+        cat "$DIST/BUILD-INFO.txt"
+        echo "dist-dir=$DIST" >> "$GITHUB_OUTPUT"
+        echo "zip-path=$ZIP" >> "$GITHUB_OUTPUT"
+        {
+          echo "### VoiceInk $VERSION ($SHORT)"
+          echo ""
+          if [ "$SIGNING" = "ad-hoc" ]; then
+            echo "> [!WARNING]"
+            echo "> Ad-hoc signed: macOS permissions and Keychain access reset on every install. Add the signing secrets (see \`.github/FORK_CI.md\`)."
+          else
+            echo "Signed with the Apple Development certificate, so existing permissions carry over."
+          fi
+          echo ""
+          echo "Artifact \`VoiceInk-ui-polish\` contains \`$(basename "$ZIP")\` and \`BUILD-INFO.txt\`."
+        } >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Remove signing keychain
+      if: always() && steps.signing.outputs.keychain != ''
+      shell: bash
+      env:
+        KEYCHAIN: ${{ steps.signing.outputs.keychain }}
+      run: security delete-keychain "$KEYCHAIN" || true
