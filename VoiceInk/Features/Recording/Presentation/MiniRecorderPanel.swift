@@ -38,7 +38,8 @@ final class MiniRecorderPanel: NSPanel {
         guard let screen = screen ?? RecorderScreenResolver.resolve() else { return nil }
 
         // Host stays large enough for assistant output; SwiftUI controls the visible mini width.
-        let padding: CGFloat = 24
+        // MiniRecorderView keeps its own 24pt bottom margin so its shadow has room to render.
+        let padding: CGFloat = 0
 
         let visibleFrame = screen.visibleFrame
         let centerX = visibleFrame.midX
