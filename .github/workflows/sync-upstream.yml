@@ -1,0 +1,138 @@
+# Fork-only, optional (see .github/FORK_CI.md): rebase ui-polish onto Beingpax/VoiceInk main, build it,
+# and only then force-push. On a rebase conflict nothing is pushed; an issue is opened instead.
+# Runs manually for now. Scheduled and manual runs only work once this file is on the fork's default branch.
+name: Sync ui-polish with upstream
+
+on:
+  workflow_dispatch:
+  # Not enabled yet: uncomment to check upstream daily.
+  # schedule:
+  #   - cron: '23 7 * * *'
+
+concurrency:
+  group: sync-ui-polish
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  issues: write
+
+env:
+  BRANCH: ui-polish
+  UPSTREAM_REPO: Beingpax/VoiceInk
+  UPSTREAM_BRANCH: main
+
+jobs:
+  sync:
+    name: Rebase, build, push
+    runs-on: macos-26
+    timeout-minutes: 150
+    steps:
+      # A fine-grained token is only needed if GitHub refuses the built-in token's push
+      # (rebased commits that touch .github/workflows can need the "Workflows" permission).
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.BRANCH }}
+          fetch-depth: 0
+          token: ${{ secrets.UPSTREAM_SYNC_TOKEN || github.token }}
+
+      - name: Rebase onto upstream
+        id: rebase
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add upstream "https://github.com/$UPSTREAM_REPO.git"
+          git fetch --no-tags upstream "$UPSTREAM_BRANCH"
+          UP="$(git rev-parse FETCH_HEAD)"
+          OLD="$(git rev-parse HEAD)"
+          { echo "old=$OLD"; echo "upstream=$UP"; } >> "$GITHUB_OUTPUT"
+          if git merge-base --is-ancestor "$UP" HEAD; then
+            echo "$BRANCH already contains $UPSTREAM_REPO@${UP:0:8}"
+            echo "status=up-to-date" >> "$GITHUB_OUTPUT"
+            echo "$BRANCH is already up to date with \`$UPSTREAM_REPO@${UP:0:8}\`." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          if git rebase "$UP"; then
+            echo "status=rebased" >> "$GITHUB_OUTPUT"
+            git log --oneline "$UP..HEAD"
+          else
+            git diff --name-only --diff-filter=U > "$RUNNER_TEMP/conflicts.txt" || true
+            git rebase --abort
+            echo "status=conflict" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Open or update conflict issue
+        if: steps.rebase.outputs.status == 'conflict'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          UP: ${{ steps.rebase.outputs.upstream }}
+          OLD: ${{ steps.rebase.outputs.old }}
+        run: |
+          set -euo pipefail
+          RUN_URL="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          {
+            echo "Rebasing \`$BRANCH\` (\`${OLD:0:8}\`) onto \`$UPSTREAM_REPO@$UPSTREAM_BRANCH\` (\`${UP:0:8}\`) stopped on a conflict, so nothing was pushed."
+            echo ""
+            echo "Conflicting files:"
+            sed 's/^/- `/; s/$/`/' "$RUNNER_TEMP/conflicts.txt"
+            echo ""
+            echo "Resolve locally:"
+            echo '```bash'
+            echo "git fetch upstream && git switch $BRANCH && git rebase upstream/$UPSTREAM_BRANCH"
+            echo "# fix conflicts, git add, git rebase --continue, then"
+            echo "git push --force-with-lease origin $BRANCH"
+            echo '```'
+            echo ""
+            echo "Run: $RUN_URL"
+          } > "$RUNNER_TEMP/issue.md"
+          cat "$RUNNER_TEMP/issue.md" >> "$GITHUB_STEP_SUMMARY"
+
+          if ! gh api "repos/$GITHUB_REPOSITORY" --jq .has_issues | grep -q true; then
+            echo "::error title=Issues are disabled::Rebase conflict, nothing pushed. Enable Issues on the fork (Settings > General > Features) so this job can report conflicts."
+            exit 1
+          fi
+          gh label create upstream-sync --color FBCA04 --description "ui-polish could not be rebased onto upstream" >/dev/null 2>&1 || true
+          NUMBER="$(gh issue list --state open --label upstream-sync --json number --jq '.[0].number // empty')"
+          if [ -z "$NUMBER" ]; then
+            gh issue create --title "ui-polish no longer rebases cleanly onto upstream" --label upstream-sync --body-file "$RUNNER_TEMP/issue.md"
+          elif gh issue view "$NUMBER" --json body,comments --jq '[.body, .comments[].body] | join("\n")' | grep -q "${UP:0:8}"; then
+            echo "Issue #$NUMBER already reports upstream ${UP:0:8}"
+          else
+            gh issue comment "$NUMBER" --body-file "$RUNNER_TEMP/issue.md"
+          fi
+          echo "::warning title=Rebase conflict::Nothing pushed; see the upstream-sync issue."
+
+      - id: build
+        if: steps.rebase.outputs.status == 'rebased'
+        uses: ./.github/actions/build-voiceink
+        with:
+          certificate-p12-base64: ${{ secrets.APPLE_DEV_CERT_P12_BASE64 }}
+          certificate-password: ${{ secrets.APPLE_DEV_CERT_PASSWORD }}
+
+      - name: Push rebased branch
+        if: steps.rebase.outputs.status == 'rebased'
+        env:
+          OLD: ${{ steps.rebase.outputs.old }}
+          HAS_SYNC_TOKEN: ${{ secrets.UPSTREAM_SYNC_TOKEN != '' }}
+        run: |
+          set -euo pipefail
+          if ! git push --force-with-lease="refs/heads/$BRANCH:$OLD" origin "HEAD:refs/heads/$BRANCH"; then
+            if [ "$HAS_SYNC_TOKEN" != "true" ]; then
+              echo "::error title=Push refused::The built-in token may not push rebased commits that contain workflow files. Add an UPSTREAM_SYNC_TOKEN secret (see .github/FORK_CI.md)."
+            fi
+            exit 1
+          fi
+          {
+            echo "Rebased \`$BRANCH\` onto \`$UPSTREAM_REPO@${{ steps.rebase.outputs.upstream }}\` and pushed \`$(git rev-parse --short HEAD)\`."
+            echo ""
+            echo "Previous tip: \`$OLD\` (restore with \`git push --force origin $OLD:$BRANCH\`)."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - if: steps.rebase.outputs.status == 'rebased'
+        uses: actions/upload-artifact@v7
+        with:
+          name: VoiceInk-ui-polish
+          path: ${{ steps.build.outputs.dist-dir }}
+          compression-level: 0
+          if-no-files-found: error
