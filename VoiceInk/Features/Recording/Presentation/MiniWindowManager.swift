@@ -6,8 +6,12 @@ import os
 class MiniWindowManager {
     private var windowController: NSWindowController?
     private var panel: MiniRecorderPanel?
+    private var exit: MiniRecorderExit?
+    private var pendingTeardown: Task<Void, Never>?
+    /// How long a hidden panel stays up so the view's exit animation can finish.
+    private let exitDuration: Duration = .milliseconds(800)
 
-    private let makeView: () -> AnyView
+    private let makeView: (MiniRecorderExit) -> AnyView
     private let logger = Logger(subsystem: "com.prakashjoshipax.voiceink", category: "MiniWindowManager")
 
     init(
@@ -18,12 +22,13 @@ class MiniWindowManager {
         onCloseTapped: @escaping () -> Void,
         onAssistantFollowUp: @escaping (String) -> Void
     ) {
-        self.makeView = {
+        self.makeView = { exit in
             AnyView(
                 MiniRecorderView(
                     stateProvider: engine,
                     recorder: recorder,
                     assistantSession: assistantSession,
+                    exit: exit,
                     onRecordButtonTapped: onRecordButtonTapped,
                     onCloseTapped: onCloseTapped,
                     onAssistantFollowUp: onAssistantFollowUp
@@ -45,19 +50,39 @@ class MiniWindowManager {
     /// capture and a transcription session in the same code path.
     @discardableResult
     func show(on screen: NSScreen? = nil) -> Bool {
+        if pendingTeardown != nil {
+            // The previous dictation's panel is still playing its exit; drop it now so the new
+            // dictation still gets a fresh panel.
+            cancelPendingTeardown()
+            deinitializeWindow()
+        }
         if panel == nil { initializeWindow(on: screen) }
         guard let panel else { return false }
         return panel.show(on: screen)
     }
 
     /// Tears the window down rather than just ordering it out, so `isVisible` is never used as a
-    /// liveness test and no panel is carried across dictations.
+    /// liveness test and no panel is carried across dictations. The teardown waits
+    /// `exitDuration` so the view can animate out first.
     func hide() {
-        deinitializeWindow()
+        guard let exit, pendingTeardown == nil else { return }
+        exit.isExiting = true
+        pendingTeardown = Task { @MainActor [weak self, exitDuration] in
+            try? await Task.sleep(for: exitDuration)
+            guard !Task.isCancelled, let self else { return }
+            self.pendingTeardown = nil
+            self.deinitializeWindow()
+        }
     }
 
     func destroyWindow() {
+        cancelPendingTeardown()
         deinitializeWindow()
+    }
+
+    private func cancelPendingTeardown() {
+        pendingTeardown?.cancel()
+        pendingTeardown = nil
     }
 
     // Rebuilding gives the SwiftUI content a new identity, so view-local state inside it is
@@ -70,10 +95,12 @@ class MiniWindowManager {
             return
         }
         let newPanel = MiniRecorderPanel(contentRect: metrics)
-        let view = makeView()
+        let newExit = MiniRecorderExit()
+        let view = makeView(newExit)
         let hostingController = NSHostingController(rootView: view)
         newPanel.contentView = hostingController.view
         panel = newPanel
+        exit = newExit
         windowController = NSWindowController(window: newPanel)
     }
 
@@ -82,5 +109,12 @@ class MiniWindowManager {
         windowController?.close()
         windowController = nil
         panel = nil
+        exit = nil
     }
+}
+
+/// Tells the mini recorder view that its panel is about to be torn down, so it can animate out.
+@MainActor
+final class MiniRecorderExit: ObservableObject {
+    @Published var isExiting = false
 }
