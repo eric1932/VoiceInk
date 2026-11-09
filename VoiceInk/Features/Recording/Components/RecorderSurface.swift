@@ -8,9 +8,12 @@ struct RecorderSurface<S: Shape>: ViewModifier {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     let shape: S
 
-    /// Dark tint: keeps the white text readable over light content, and keeps the pill from
-    /// being the brightest object on a dark desktop.
-    private let tint = Color.black.opacity(0.58)
+    /// Light tint on the glass itself.
+    private let tint = Color.black.opacity(0.25)
+    /// Fixed dark layer inside the glass. Liquid Glass turns light over bright content, which
+    /// washes out the white text and level row; this keeps the pill dark on any background
+    /// (about #282828 at 60 %, like a HUD panel).
+    private let scrim = Color(white: 0.157).opacity(0.6)
 
     /// Faint top-down highlight plus a hairline inner edge that give the surface a little depth.
     private var highlight: some View {
@@ -32,13 +35,18 @@ struct RecorderSurface<S: Shape>: ViewModifier {
             content.background(Color.black, in: shape)
         } else if #available(macOS 26.0, *) {
             content
-                .background { highlight }
+                .background {
+                    ZStack {
+                        shape.fill(scrim)
+                        highlight
+                    }
+                }
                 .glassEffect(.regular.tint(tint), in: shape)
         } else {
             content.background {
                 ZStack {
                     RecorderBackdrop()
-                    tint
+                    scrim
                     highlight
                 }
                 .clipShape(shape)
@@ -75,10 +83,18 @@ struct RecorderShadow<S: Shape>: View {
                 .shadow(color: .black.opacity(0.22), radius: 10, x: 0, y: 6)
         }
         .mask {
-            // Punch the shape itself out so only the shadow around it remains.
+            // Punch the shape itself out so only the shadow around it remains. The extra
+            // stroke widens the cut by ~1 pt, so the black fill's anti-aliased edge can't
+            // show as a hairline (visible on light backgrounds).
             Rectangle()
                 .padding(-48)
-                .overlay { shape.blendMode(.destinationOut) }
+                .overlay {
+                    ZStack {
+                        shape
+                        shape.stroke(lineWidth: 2)
+                    }
+                    .blendMode(.destinationOut)
+                }
                 .compositingGroup()
         }
         .allowsHitTesting(false)
