@@ -89,6 +89,8 @@ struct MiniRecorderView<S: RecorderStateProvider & ObservableObject>: View {
                         // Keep the processing spinner through the exit hold instead of
                         // flashing back to the idle look.
                         recordingState: isFinishing ? .transcribing : stateProvider.recordingState,
+                        // Same coral as the glow, so there's one red on screen, not two.
+                        recordingTint: Color(red: 1.0, green: 0.42, blue: 0.37),  // #FF6B5E
                         processingTint: Color(red: 0.04, green: 0.52, blue: 1.0),
                         action: onRecordButtonTapped
                     )
@@ -119,12 +121,10 @@ struct MiniRecorderView<S: RecorderStateProvider & ObservableObject>: View {
     private var transcriptSection: some View {
         VStack(spacing: 0) {
             if hasLiveTranscript {
-                LiveTranscriptView(text: transcriptText)
-                    // LiveTranscriptView already insets 16 / 6 pt; give the text more room
-                    // from the rounded edge and the glow.
-                    .padding(.horizontal, 4)
-                    .padding(.top, 8)
-                    .padding(.bottom, 4)
+                MiniTranscriptText(text: transcriptText, resize: resizeAnimation)
+                    .padding(.horizontal, 20)
+                    .padding(.top, 12)
+                    .padding(.bottom, 8)
                     .transition(.opacity.combined(with: .offset(y: 6)))
             }
         }

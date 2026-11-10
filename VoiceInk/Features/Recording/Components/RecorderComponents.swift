@@ -39,6 +39,8 @@ struct RecorderToggleButton: View {
 
 struct RecorderRecordButton: View {
     let recordingState: RecordingState
+    /// Optional color for the recording state (the default is the system error red).
+    var recordingTint: Color? = nil
     /// Optional color for the processing state (the default is neutral white).
     var processingTint: Color? = nil
     let action: () -> Void
@@ -98,7 +100,7 @@ struct RecorderRecordButton: View {
                 mark: Color(red: 0.78, green: 0.78, blue: 0.80)
             )
         case .recording:
-            let red = AppTheme.Status.error
+            let red = recordingTint ?? AppTheme.Status.error
             return StateColors(
                 surface: red.opacity(0.92),
                 border: red.opacity(0.98),
