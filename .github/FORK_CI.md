@@ -1,31 +1,46 @@
 # Fork CI: automatic `ui-polish` builds
 
-This fork (`eric1932/VoiceInk`) builds the `ui-polish` branch on GitHub Actions and publishes a signed
-`VoiceInk.app` as an artifact. These files exist only in this fork:
+This fork (`eric1932/VoiceInk`) builds the `ui-polish` branch on GitHub Actions and publishes an
+ad-hoc signed `VoiceInk.app` as an artifact (see [Signing](#signing-ad-hoc-on-purpose)). These files
+exist only in this fork:
 
 | File | What it does |
 | --- | --- |
-| `.github/workflows/build-ui-polish.yml` | Runs on every push to `ui-polish`. Builds, signs and uploads the artifact `VoiceInk-ui-polish`. |
-| `.github/actions/build-voiceink/action.yml` | The build itself, the same as `make local`: whisper.xcframework in `~/VoiceInk-Dependencies` (cached by whisper.cpp commit), then `make local` with the certificate from the secrets. |
+| `.github/workflows/build-ui-polish.yml` | Runs on every push to `ui-polish`. Builds and uploads the artifact `VoiceInk-ui-polish`. |
+| `.github/actions/build-voiceink/action.yml` | The build itself, the same as `make local`: whisper.xcframework in `~/VoiceInk-Dependencies` (cached by whisper.cpp commit), then `make local`, ad-hoc signed. |
 | `.github/workflows/sync-upstream.yml` | Optional and not scheduled yet. Rebases `ui-polish` onto `Beingpax/VoiceInk` `main`, builds it, and force-pushes only if the build passes. On a conflict it pushes nothing and opens an issue. |
 
 Runner: `macos-26` (Xcode 26.6, macOS 26.5 SDK, which `glassEffect` needs). A manual run can pick the
 `xcode-27` preview image instead. The first build, or a new whisper.cpp commit, also builds the
 xcframework for every platform, which takes longer. After that the framework comes from the cache.
 
+## Signing: ad-hoc on purpose
+
+CI builds are **not** signed with the Apple Development certificate, and the certificate secrets are
+deliberately left unset. A personal (free) Apple Development certificate is named after the Apple ID
+email, and its organization field is the account holder's name. Every app signed with it shows both
+(`codesign -dvv`), and this repository's artifacts and releases can be downloaded by anyone. Ad-hoc
+builds carry no identity.
+
+The cost: macOS treats every ad-hoc install as a new app, so Accessibility, Microphone and Keychain
+access have to be granted again after each install. For the copy you use every day, build on your Mac
+instead with `make local`, which signs with your certificate locally and keeps those permissions. CI
+builds are for checking that a commit builds, and for releases.
+
 ## Secrets
 
-Add these under **Settings → Secrets and variables → Actions** (or with `gh secret set`, below):
+Add these under **Settings → Secrets and variables → Actions** (or with `gh secret set`):
 
-| Secret | Required | Value |
+| Secret | Set? | Value |
 | --- | --- | --- |
-| `APPLE_DEV_CERT_P12_BASE64` | for signed builds | base64 of your exported Apple Development `.p12` (certificate **and** private key) |
-| `APPLE_DEV_CERT_PASSWORD` | for signed builds | the password you set when exporting the `.p12` |
 | `UPSTREAM_SYNC_TOKEN` | only if the sync job's push is refused | fine-grained token for this repo only, with **Contents: Read and write** and **Workflows: Read and write** |
+| `APPLE_DEV_CERT_P12_BASE64` | **no** (see above) | base64 of an exported Apple Development `.p12` (certificate **and** private key) |
+| `APPLE_DEV_CERT_PASSWORD` | **no** (see above) | the password set when exporting the `.p12` |
 
-Without the certificate secrets the build still runs, but it is ad-hoc signed and shows a warning.
-macOS then treats every install as a new app, so Accessibility, Microphone and Keychain access have to
-be granted again.
+Without the certificate secrets each run adds a notice that the app is ad-hoc signed.
+
+<details>
+<summary>Signed CI builds (not used here: they publish your Apple ID email and name)</summary>
 
 ### Export the certificate (on your Mac)
 
@@ -62,6 +77,8 @@ The runner imports the `.p12` into a temporary keychain that is deleted at the e
 the certificate name (your Apple ID email) in the logs. Note that artifacts of a public repository can
 be downloaded by any signed-in GitHub user, and the app's signature contains that certificate name.
 
+</details>
+
 ## Install a CI build
 
 Every successful run uploads the artifact `VoiceInk-ui-polish`. It contains `VoiceInk-<version>-<commit>.zip`
@@ -78,7 +95,11 @@ osascript -e 'tell application id "com.prakashjoshipax.VoiceInk" to quit'; rm -r
 
 If you download the artifact in a browser instead, unzip it twice (artifact zip, then the app zip) and
 run `xattr -cr` on the app. The build isn't notarized, so Gatekeeper would otherwise block the
-quarantined copy.
+quarantined copy. Being ad-hoc signed, it then asks for Accessibility, Microphone and Keychain access
+again.
+
+Releases (for example [`v2.26-ui-polish.1`](https://github.com/eric1932/VoiceInk/releases/tag/v2.26-ui-polish.1))
+attach the same zip, made from a CI run, next to before/after material.
 
 ## Keeping `ui-polish` current with upstream
 
