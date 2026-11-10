@@ -9,6 +9,9 @@ struct MiniRecorderView<S: RecorderStateProvider & ObservableObject>: View {
     let onCloseTapped: () -> Void
     let onAssistantFollowUp: (String) -> Void
     @AppStorage(RecorderDisplaySettingsKeys.showLiveTranscript) private var showLiveTranscript = true
+    @AppStorage(RecorderDisplaySettingsKeys.miniBackgroundDarkness)
+    private var backgroundDarkness = MiniRecorderLook.defaultDarkness
+    @AppStorage(RecorderDisplaySettingsKeys.miniGlow) private var glow: MiniRecorderGlow = .normal
 
     // Visual-only state: keeps the last live text and the "done" look on screen while the
     // panel animates out, since the engine clears the text as soon as recording stops.
@@ -27,7 +30,10 @@ struct MiniRecorderView<S: RecorderStateProvider & ObservableObject>: View {
     /// Room below the recorder so its shadow isn't cut off by the panel edge.
     private let shadowMargin: CGFloat = 24
 
+    /// Expanding from the compact pill when text first arrives, and collapsing back.
     private let resizeAnimation = Animation.spring(response: 0.4, dampingFraction: 0.85)
+    /// Growing or shrinking by one line of text; a touch softer than the expand.
+    private let lineChangeAnimation = Animation.spring(response: 0.45, dampingFraction: 0.9)
     private let appearAnimation = Animation.easeOut(duration: 0.22)
     /// Seconds the finished recorder stays on screen (in its "done" color) before fading.
     private let doneHold: Double = 0.5
@@ -59,6 +65,7 @@ struct MiniRecorderView<S: RecorderStateProvider & ObservableObject>: View {
     }
 
     private var glowTone: RecorderGlowTone {
+        if glow == .off { return .none }
         if stateProvider.recordingState == .recording { return .recording }
         if isProcessing || isFinishing { return .done }
         return .none
@@ -121,7 +128,7 @@ struct MiniRecorderView<S: RecorderStateProvider & ObservableObject>: View {
     private var transcriptSection: some View {
         VStack(spacing: 0) {
             if hasLiveTranscript {
-                MiniTranscriptText(text: transcriptText, resize: resizeAnimation)
+                MiniTranscriptText(text: transcriptText, resize: lineChangeAnimation)
                     .padding(.horizontal, 20)
                     .padding(.top, 12)
                     .padding(.bottom, 8)
@@ -145,9 +152,9 @@ struct MiniRecorderView<S: RecorderStateProvider & ObservableObject>: View {
             controlBar
         }
         .frame(width: hasAssistantResponse ? assistantWidth : (hasLiveTranscript ? expandedWidth : compactWidth))
-        .modifier(RecorderSurface(shape: shape))
+        .modifier(RecorderSurface(shape: shape, darkness: backgroundDarkness))
         .clipShape(shape)
-        .overlay { RecorderGlowBorder(tone: glowTone, shape: shape) }
+        .overlay { RecorderGlowBorder(tone: glowTone, shape: shape, subtle: glow == .subtle) }
         .background { RecorderShadow(shape: shape) }
         .opacity(isOnScreen ? 1 : 0)
         .scaleEffect(isOnScreen ? 1 : (exit.isExiting ? 0.97 : 0.96), anchor: .bottom)

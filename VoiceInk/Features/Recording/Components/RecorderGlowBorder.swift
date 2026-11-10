@@ -18,6 +18,8 @@ enum RecorderGlowTone: Equatable {
 struct RecorderGlowBorder<S: InsettableShape>: View, Animatable {
     let tone: RecorderGlowTone
     var shape: S
+    /// A thin rim with a short halo, without the wide bloom.
+    let subtle: Bool
 
     var animatableData: S.AnimatableData {
         get { shape.animatableData }
@@ -36,15 +38,24 @@ struct RecorderGlowBorder<S: InsettableShape>: View, Animatable {
     }
 
     private var style: GlowStyle {
-        colorScheme == .light
-            ? GlowStyle(
+        switch (colorScheme == .light, subtle) {
+        case (true, false), (false, true):
+            // Tight to the edge: the normal look in light mode, the subtle one in dark mode.
+            GlowStyle(
                 bloomWidth: 6, bloomBlur: 6, bloomOpacity: 0.12,
                 haloWidth: 4, haloBlur: 4, haloOpacity: 0.5,
                 rimWidth: 1.5, rimOpacity: 0.85)
-            : GlowStyle(
+        case (true, true):
+            GlowStyle(
+                bloomWidth: 0, bloomBlur: 0, bloomOpacity: 0,
+                haloWidth: 3, haloBlur: 3, haloOpacity: 0.35,
+                rimWidth: 1.5, rimOpacity: 0.85)
+        case (false, false):
+            GlowStyle(
                 bloomWidth: 8, bloomBlur: 14, bloomOpacity: 0.35,
                 haloWidth: 6, haloBlur: 8, haloOpacity: 0.9,
                 rimWidth: 1.2, rimOpacity: 0.45)
+        }
     }
 
     /// Seconds per full lap of the outline.
@@ -58,9 +69,10 @@ struct RecorderGlowBorder<S: InsettableShape>: View, Animatable {
     private let recordingColor = Color(red: 1.0, green: 0.40, blue: 0.32)  // #FF6652, coral red
     private let doneColor = Color(red: 0.04, green: 0.52, blue: 1.0)  // #0A84FF
 
-    init(tone: RecorderGlowTone, shape: S) {
+    init(tone: RecorderGlowTone, shape: S, subtle: Bool = false) {
         self.tone = tone
         self.shape = shape
+        self.subtle = subtle
     }
 
     var body: some View {
@@ -93,10 +105,12 @@ struct RecorderGlowBorder<S: InsettableShape>: View, Animatable {
             let slices = lobeSlices(of: shape.path(in: rect), head: head)
 
             // Wide, faint bloom that fades out past the edge.
-            ctx.drawLayer { layer in
-                layer.addFilter(.blur(radius: style.bloomBlur))
-                layer.opacity = style.bloomOpacity
-                stroke(slices, in: &layer, color: color, lineWidth: style.bloomWidth)
+            if style.bloomOpacity > 0 {
+                ctx.drawLayer { layer in
+                    layer.addFilter(.blur(radius: style.bloomBlur))
+                    layer.opacity = style.bloomOpacity
+                    stroke(slices, in: &layer, color: color, lineWidth: style.bloomWidth)
+                }
             }
             // Soft halo centered on the edge.
             ctx.drawLayer { layer in
