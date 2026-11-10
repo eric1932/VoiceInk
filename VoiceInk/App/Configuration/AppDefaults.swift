@@ -10,6 +10,9 @@ enum CleanupSettingsKeys {
 
 enum RecorderDisplaySettingsKeys {
     static let showLiveTranscript = "ShowLiveTranscript"
+    // Mini recorder look (Settings > Interface, shown for the Mini style)
+    static let miniBackgroundDarkness = "MiniRecorderBackgroundDarkness"
+    static let miniGlow = "MiniRecorderGlow"
 }
 
 enum CloudTranscriptionSettings {
