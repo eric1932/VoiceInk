@@ -12,8 +12,8 @@ struct RecorderSurface<S: Shape>: ViewModifier {
     private let tint = Color.black.opacity(0.25)
     /// Fixed dark layer inside the glass. Liquid Glass turns light over bright content, which
     /// washes out the white text and level row; this keeps the pill dark on any background
-    /// (about #282828 at 60 %, like a HUD panel).
-    private let scrim = Color(white: 0.157).opacity(0.6)
+    /// (about #282828 at 70 %, like a HUD panel).
+    private let scrim = Color(white: 0.157).opacity(0.7)
 
     /// Faint top-down highlight plus a hairline inner edge that give the surface a little depth.
     private var highlight: some View {

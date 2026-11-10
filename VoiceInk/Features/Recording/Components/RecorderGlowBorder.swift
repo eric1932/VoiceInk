@@ -25,6 +25,27 @@ struct RecorderGlowBorder<S: InsettableShape>: View, Animatable {
     }
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.colorScheme) private var colorScheme
+
+    /// Bloom, halo and rim settings. In light mode the wide bloom reads as a pink smudge on white
+    /// backgrounds, so the light is kept tight to the edge there; dark mode keeps the full glow.
+    private struct GlowStyle {
+        let bloomWidth: CGFloat, bloomBlur: CGFloat, bloomOpacity: Double
+        let haloWidth: CGFloat, haloBlur: CGFloat, haloOpacity: Double
+        let rimWidth: CGFloat, rimOpacity: Double
+    }
+
+    private var style: GlowStyle {
+        colorScheme == .light
+            ? GlowStyle(
+                bloomWidth: 6, bloomBlur: 6, bloomOpacity: 0.12,
+                haloWidth: 4, haloBlur: 4, haloOpacity: 0.5,
+                rimWidth: 1.5, rimOpacity: 0.85)
+            : GlowStyle(
+                bloomWidth: 8, bloomBlur: 14, bloomOpacity: 0.35,
+                haloWidth: 6, haloBlur: 8, haloOpacity: 0.9,
+                rimWidth: 1.2, rimOpacity: 0.45)
+    }
 
     /// Seconds per full lap of the outline.
     private let lapDuration: TimeInterval = 2.5
@@ -66,26 +87,27 @@ struct RecorderGlowBorder<S: InsettableShape>: View, Animatable {
     }
 
     private func glow(color: Color, head: Double) -> some View {
-        Canvas { ctx, size in
+        let style = style
+        return Canvas { ctx, size in
             let rect = CGRect(origin: .zero, size: size).insetBy(dx: bleed, dy: bleed)
             let slices = lobeSlices(of: shape.path(in: rect), head: head)
 
-            // Wide, faint bloom that fades out well past the edge.
+            // Wide, faint bloom that fades out past the edge.
             ctx.drawLayer { layer in
-                layer.addFilter(.blur(radius: 14))
-                layer.opacity = 0.35
-                stroke(slices, in: &layer, color: color, lineWidth: 8)
+                layer.addFilter(.blur(radius: style.bloomBlur))
+                layer.opacity = style.bloomOpacity
+                stroke(slices, in: &layer, color: color, lineWidth: style.bloomWidth)
             }
-            // Soft halo centered on the edge, ~10 pt to each side.
+            // Soft halo centered on the edge.
             ctx.drawLayer { layer in
-                layer.addFilter(.blur(radius: 8))
-                layer.opacity = 0.9
-                stroke(slices, in: &layer, color: color, lineWidth: 6)
+                layer.addFilter(.blur(radius: style.haloBlur))
+                layer.opacity = style.haloOpacity
+                stroke(slices, in: &layer, color: color, lineWidth: style.haloWidth)
             }
-            // Dim, fine rim on the edge itself.
+            // Fine rim on the edge itself.
             ctx.drawLayer { layer in
-                layer.opacity = 0.45
-                stroke(slices, in: &layer, color: color, lineWidth: 1.2)
+                layer.opacity = style.rimOpacity
+                stroke(slices, in: &layer, color: color, lineWidth: style.rimWidth)
             }
         }
     }
