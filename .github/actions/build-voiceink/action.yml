@@ -1,7 +1,7 @@
 # Fork-only CI helper (see .github/FORK_CI.md). Builds VoiceInk.app exactly like `make local` on a Mac:
 # whisper.xcframework in ~/VoiceInk-Dependencies, then `make local` (Release, LocalBuild.xcconfig,
 # LOCAL_BUILD flag, VoiceInk.local.entitlements). Signs with the Apple Development certificate passed in,
-# or ad-hoc with a warning when none is given.
+# or ad-hoc (with a notice) when none is given; this fork leaves it unset on purpose, see FORK_CI.md.
 name: Build VoiceInk.app
 description: Build and sign VoiceInk.app the way `make local` does, with a cached whisper.xcframework.
 
@@ -139,7 +139,7 @@ runs:
       run: |
         set -euo pipefail
         if [ -z "$P12_BASE64" ]; then
-          echo "::warning title=Ad-hoc signed build::Secret APPLE_DEV_CERT_P12_BASE64 is not set, so this VoiceInk.app is ad-hoc signed. macOS treats every ad-hoc build as a new app: Accessibility, Microphone and Keychain access have to be granted again after each install. Add the certificate as described in .github/FORK_CI.md."
+          echo "::notice title=Ad-hoc signed build::This VoiceInk.app is ad-hoc signed, as intended for this public fork (see .github/FORK_CI.md, Signing). macOS treats every ad-hoc build as a new app: Accessibility, Microphone and Keychain access have to be granted again after each install."
           echo "identity=-" >> "$GITHUB_OUTPUT"
           echo "signing=ad-hoc" >> "$GITHUB_OUTPUT"
           exit 0
