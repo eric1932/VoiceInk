@@ -8,4 +8,5 @@
 - The certificate contains the owner's name and Apple ID email. Use it only for builds installed on the owner's own machines. CI builds and anything shared or published stay ad-hoc (`.github/workflows/build-ui-polish.yml`).
 
 ## Build timing
-- `make local` deletes `.local-build` first, so every run is a full build. If the log stops at "Downloading package prebuilt … swift-syntax" for more than a few minutes, the download has hung (it once waited two hours): stop the build and run it again.
+- `make local` deletes `.local-build` first, so every run is a full build. For later rebuilds, `design-ref/tools/build-fast.sh --install` keeps `.local-build`, recompiles only what changed, signs the same way, and replaces and relaunches the installed app.
+- If the log stops at "Downloading package prebuilt … swift-syntax" for more than a few minutes, the download has hung (it once waited two hours): stop the build and run it again.

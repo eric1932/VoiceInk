@@ -1,0 +1,8 @@
+# Built from the .swift sources (see README.md)
+tools/compare
+tools/frames
+tools/press
+# capture.sh scratch: phrase audio and paste target, recreated when missing
+clips/
+# This Mac's install log. Personal, backed up to iCloud Drive instead.
+cleanup-ledger.md
