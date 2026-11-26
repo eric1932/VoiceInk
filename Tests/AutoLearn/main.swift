@@ -12,11 +12,11 @@ func check(_ name: String, _ condition: Bool) {
 
 /// Runs a paste/edit through the same steps Auto-Learn uses and returns the rules
 /// the local reviewer would suggest, as "source→destination".
-func learned(field: String, pasted: String, final: String) -> [String] {
+func learned(field: String, pasted: String, final: String, usedFallback: Bool = false) -> [String] {
     let range = (field as NSString).range(of: pasted)
     let snapshot = AutoLearnFieldSnapshot(
         baselineFieldText: field, finalFieldText: final,
-        pastedRange: range, originalPastedText: pasted)
+        pastedRange: range, originalPastedText: pasted, usedFallback: usedFallback)
     guard let revision = FinalSnapshotDiffEngine.revision(from: snapshot) else { return [] }
     return CorrectionDiffEngine.candidates(from: revision, usesAIReviewer: false).compactMap { candidate in
         guard let pair = CorrectionDiffEngine.replacementPair(
@@ -51,5 +51,25 @@ check("cjk_latinNextToHan", learned(field: s4, pasted: s4,
 let s5 = "他高兴的跳了起来"
 check("cjk_singleCharNotLearned", learned(field: s5, pasted: s5,
     final: "他高兴地跳了起来") == [])
+
+// MARK: - Sending a message clears the field
+
+var a = AutoLearnFieldSampler()
+check("sampler_blankReadSettlesImmediately",
+    a.record("abc") == .none && a.record("") == .cleared && a.lastText == "abc")
+var b = AutoLearnFieldSampler()
+check("sampler_oneUnreadableTolerated",
+    b.record("abc") == .none && b.record(nil) == .none && b.record("abd") == .none && b.lastText == "abd")
+check("sampler_twoUnreadableSettles", b.record(nil) == .none && b.record(nil) == .cleared)
+var c = AutoLearnFieldSampler()
+check("sampler_nothingSeenNeverSettles",
+    c.record("") == .none && c.record(nil) == .none && c.record(nil) == .none)
+// The final read is empty, so the last text seen before sending stands in for it.
+check("send_fallbackLearnsFix", learned(field: s1, pasted: s1,
+    final: s1.replacingOccurrences(of: "Kupertino", with: "Cupertino"), usedFallback: true)
+    == ["Kupertino→Cupertino"])
+// Sampled halfway through deleting the text with backspace: not a correction.
+check("send_fallbackIgnoresTruncation", learned(field: "Kupertino is nice", pasted: "Kupertino is nice",
+    final: "Kup", usedFallback: true) == [])
 
 print("Auto-Learn tests: \(passed) passed")

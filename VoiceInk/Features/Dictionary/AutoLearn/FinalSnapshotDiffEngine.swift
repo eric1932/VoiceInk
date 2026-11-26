@@ -38,6 +38,11 @@ enum FinalSnapshotDiffEngine {
         guard !textIsExactlyEqual(normalizedOriginalText, normalizedCorrectedText) else {
             return nil
         }
+        // A fallback sample taken while the text was being deleted is a cut-off
+        // copy of the original, not a correction.
+        if snapshot.usedFallback, normalizedOriginalText.hasPrefix(normalizedCorrectedText) {
+            return nil
+        }
 
         return AutoLearnRevision(
             original: normalizedOriginalText,

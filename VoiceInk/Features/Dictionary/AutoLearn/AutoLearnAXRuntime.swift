@@ -10,6 +10,7 @@ final class AutoLearnAXRuntime: @unchecked Sendable {
         let baselineFieldText: String
         let pastedRange: NSRange
         let pastedText: String
+        var sampler = AutoLearnFieldSampler()
     }
 
     private let queue = DispatchQueue(label: "com.prakashjoshipax.voiceink.auto-learn.accessibility")
@@ -84,8 +85,19 @@ final class AutoLearnAXRuntime: @unchecked Sendable {
             session = nil
 
             defer { textReader.restoreWebAccessibility(processID: AXProcessID(active.appElement), appElement: active.appElement) }
-            guard let finalTextValue = textReader.textValue(from: active.targetElement) else { return nil }
-            let finalFieldText = finalTextValue.text
+            let finalFieldText: String
+            var usedFallback = false
+            if let finalRead = textReader.textValue(from: active.targetElement)?.text,
+                !finalRead.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            {
+                finalFieldText = finalRead
+            } else if let sampled = active.sampler.lastText {
+                // The field was cleared, usually because the message was sent.
+                finalFieldText = sampled
+                usedFallback = true
+            } else {
+                return nil
+            }
             guard finalFieldText.utf16.count <= AccessibilityTextReader.maximumFieldUTF16Length else { return nil }
             guard !textIsExactlyEqual(finalFieldText, active.baselineFieldText) else { return nil }
 
@@ -93,8 +105,24 @@ final class AutoLearnAXRuntime: @unchecked Sendable {
                 baselineFieldText: active.baselineFieldText,
                 finalFieldText: finalFieldText,
                 pastedRange: active.pastedRange,
-                originalPastedText: active.pastedText
+                originalPastedText: active.pastedText,
+                usedFallback: usedFallback
             )
+        }
+    }
+
+    /// Reads the field once and remembers its text, so an edit survives the
+    /// field being cleared when the message is sent.
+    func sampleField(token: AutoLearnPasteToken) async -> AutoLearnFieldSampler.Event {
+        await perform { [self] in
+            guard var active = session, active.token == token else { return .none }
+            let text = textReader.textValue(from: active.targetElement)?.text
+            let readable = text.flatMap {
+                $0.utf16.count <= AccessibilityTextReader.maximumFieldUTF16Length ? $0 : nil
+            }
+            let event = active.sampler.record(readable)
+            session = active
+            return event
         }
     }
 

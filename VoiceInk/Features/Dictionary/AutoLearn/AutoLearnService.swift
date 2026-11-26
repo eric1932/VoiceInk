@@ -19,6 +19,7 @@ actor AutoLearnService {
     private var activeToken: AutoLearnPasteToken?
     private var deadlineTask: Task<Void, Never>?
     private var focusFinalizationTask: Task<Void, Never>?
+    private var sampleTask: Task<Void, Never>?
     private var reviewTask: Task<Void, Never>?
     private var reviewGeneration: UInt64 = 0
     private var claimedCandidateIDs = Set<UUID>()
@@ -376,6 +377,7 @@ actor AutoLearnService {
         }
 
         activeToken = token
+        startSampling(token: token)
         focusObserver.start(processID: processID, token: token) { token in
             Task {
                 await AutoLearnService.shared.focusMayHaveChanged(token: token)
@@ -394,9 +396,36 @@ actor AutoLearnService {
         deadlineTask = nil
         focusFinalizationTask?.cancel()
         focusFinalizationTask = nil
+        sampleTask?.cancel()
+        sampleTask = nil
         focusObserver.stop()
         activeToken = nil
         return token
+    }
+
+    /// Reads the field every quarter second while observing. When the field is
+    /// cleared (a chat message was sent), the session ends right away and is
+    /// compared using the last text seen before the clear.
+    private func startSampling(token: AutoLearnPasteToken) {
+        sampleTask?.cancel()
+        sampleTask = Task { [weak self] in
+            while let self,
+                await self.sleep(nanoseconds: AutoLearnLimits.fieldSampleIntervalNanoseconds),
+                !Task.isCancelled
+            {
+                guard await self.sampleOnce(token: token) else { return }
+            }
+        }
+    }
+
+    /// Returns false when sampling should stop.
+    private func sampleOnce(token: AutoLearnPasteToken) async -> Bool {
+        guard activeToken == token, isEnabled else { return false }
+        guard await accessibilityRuntime.sampleField(token: token) == .cleared else { return true }
+        guard activeToken == token, isEnabled else { return false }
+        logger.notice("Auto Learn settled reason=field-cleared")
+        await completeSession(token: token)
+        return false
     }
 
     private func discardActiveSession() async {

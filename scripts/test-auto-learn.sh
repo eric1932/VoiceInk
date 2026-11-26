@@ -14,6 +14,7 @@ swiftc -O -o "$OUT/auto-learn-tests" \
     "$AL/CorrectionDiffEngine.swift" \
     "$AL/FinalSnapshotDiffEngine.swift" \
     "$AL/AutoLearnLocalReviewer.swift" \
+    "$AL/AutoLearnFieldSampler.swift" \
     "$ROOT/VoiceInk/Features/Dictionary/Workflows/WordReplacementVariants.swift"
 
 "$OUT/auto-learn-tests"

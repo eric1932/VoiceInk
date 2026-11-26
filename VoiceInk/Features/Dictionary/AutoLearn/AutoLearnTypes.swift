@@ -45,6 +45,9 @@ struct AutoLearnFieldSnapshot: Sendable {
     let finalFieldText: String
     let pastedRange: NSRange
     let originalPastedText: String
+    /// True when the field was empty at the end and `finalFieldText` is the
+    /// last text sampled before it was cleared.
+    var usedFallback = false
 }
 
 struct DetectedCorrectionCandidate: Hashable, Sendable {
@@ -130,6 +133,7 @@ struct AutoLearnReviewProposal: Codable, Identifiable, Sendable {
 enum AutoLearnLimits {
     static let observationDurationNanoseconds: UInt64 = 60_000_000_000
     static let verificationDelayNanoseconds: UInt64 = 120_000_000
+    static let fieldSampleIntervalNanoseconds: UInt64 = 250_000_000
     static let focusChangeGraceNanoseconds: UInt64 = 250_000_000
     static let accessibilityTimeoutSeconds: Float = 0.20
     static let captureAccessibilityTimeoutSeconds: Float = 0.10
