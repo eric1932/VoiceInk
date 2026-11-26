@@ -424,7 +424,7 @@ actor AutoLearnService {
         guard await accessibilityRuntime.sampleField(token: token) == .cleared else { return true }
         guard activeToken == token, isEnabled else { return false }
         logger.notice("Auto Learn settled reason=field-cleared")
-        await completeSession(token: token)
+        await completeSession(token: token, fieldWasCleared: true)
         return false
     }
 
@@ -438,15 +438,15 @@ actor AutoLearnService {
         }
     }
 
-    private func completeSession(token: AutoLearnPasteToken) async {
+    private func completeSession(token: AutoLearnPasteToken, fieldWasCleared: Bool = false) async {
         guard activeToken == token else { return }
         resetObservation()
-        await persistFinishedSession(token: token)
+        await persistFinishedSession(token: token, fieldWasCleared: fieldWasCleared)
     }
 
-    private func persistFinishedSession(token: AutoLearnPasteToken) async {
+    private func persistFinishedSession(token: AutoLearnPasteToken, fieldWasCleared: Bool = false) async {
         let cancellationGeneration = snapshotCancellationGeneration
-        let snapshot = await accessibilityRuntime.finishSnapshot(token: token)
+        let snapshot = await accessibilityRuntime.finishSnapshot(token: token, fieldWasCleared: fieldWasCleared)
         guard snapshotCancellationGeneration == cancellationGeneration else { return }
         await persistSnapshot(snapshot)
     }

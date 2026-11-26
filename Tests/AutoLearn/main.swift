@@ -64,6 +64,23 @@ check("sampler_twoUnreadableSettles", b.record(nil) == .none && b.record(nil) ==
 var c = AutoLearnFieldSampler()
 check("sampler_nothingSeenNeverSettles",
     c.record("") == .none && c.record(nil) == .none && c.record(nil) == .none)
+// Text still changing at the last read (half-typed word, IME composition) is not trusted.
+var d = AutoLearnFieldSampler()
+_ = d.record("我们去北鲸开会"); _ = d.record("我们去北鲸开会"); _ = d.record("我们去beijing开会")
+check("sampler_changingTextNotTrusted", d.record("") == .cleared && d.settledText == nil)
+var e = AutoLearnFieldSampler()
+_ = e.record("我们去北京开会"); _ = e.record("我们去北京开会")
+check("sampler_stableTextTrusted", e.record("") == .cleared && e.settledText == "我们去北京开会")
+// Sent and started a new message between two reads: no blank was ever seen.
+var f = AutoLearnFieldSampler()
+let sentMessage = "Can you send the report by Friday?"
+_ = f.record(sentMessage); _ = f.record(sentMessage)
+check("sampler_newMessageCountsAsCleared", f.record("A") == .cleared && f.settledText == sentMessage)
+var g = AutoLearnFieldSampler()
+_ = g.record("我们去beijing开会"); _ = g.record("我们去beijing开会")
+check("sampler_imeCommitIsNotANewMessage", g.record("我们去北京开会") == .none)
+var h = AutoLearnFieldSampler()
+check("sampler_shortFieldEditsAreNotNewMessages", h.record("C") == .none && h.record("Cup") == .none)
 // The final read is empty, so the last text seen before sending stands in for it.
 check("send_fallbackLearnsFix", learned(field: s1, pasted: s1,
     final: s1.replacingOccurrences(of: "Kupertino", with: "Cupertino"), usedFallback: true)

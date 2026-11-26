@@ -79,7 +79,9 @@ final class AutoLearnAXRuntime: @unchecked Sendable {
         }
     }
 
-    func finishSnapshot(token: AutoLearnPasteToken) async -> AutoLearnFieldSnapshot? {
+    /// `fieldWasCleared` is true when sampling saw the field emptied or replaced;
+    /// the field then holds nothing (or a new message), so it is not read again.
+    func finishSnapshot(token: AutoLearnPasteToken, fieldWasCleared: Bool = false) async -> AutoLearnFieldSnapshot? {
         await perform { [self] in
             guard let active = session, active.token == token else { return nil }
             session = nil
@@ -87,11 +89,12 @@ final class AutoLearnAXRuntime: @unchecked Sendable {
             defer { textReader.restoreWebAccessibility(processID: AXProcessID(active.appElement), appElement: active.appElement) }
             let finalFieldText: String
             var usedFallback = false
-            if let finalRead = textReader.textValue(from: active.targetElement)?.text,
+            if !fieldWasCleared,
+                let finalRead = textReader.textValue(from: active.targetElement)?.text,
                 !finalRead.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             {
                 finalFieldText = finalRead
-            } else if let sampled = active.sampler.lastText {
+            } else if let sampled = active.sampler.settledText {
                 // The field was cleared, usually because the message was sent.
                 finalFieldText = sampled
                 usedFallback = true
