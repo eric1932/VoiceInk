@@ -1,4 +1,5 @@
 import Foundation
+import NaturalLanguage
 
 enum CorrectionDiffEngine {
     static func replacementPair(from revision: AutoLearnRevision) -> (source: String, destination: String)? {
@@ -36,15 +37,21 @@ enum CorrectionDiffEngine {
         let correctedRange: Range<Int>
     }
 
+    // Full-width forms are listed alongside ASCII so Chinese and Japanese
+    // punctuation splits text the same way.
     private static let trailingSentencePunctuation: Set<Character> = [
         ".", ",", "!", "?", ";", ":", "…",
+        "，", "。", "！", "？", "；", "：", "、",
     ]
     private static let leadingWrappers: Set<Character> = [
         "\"", "“", "‘", "(", "[", "{",
+        "（", "【", "《", "「", "『",
     ]
     private static let structuralSeparators: Set<Character> = [
         ",", "!", "?", ";", ":", "…", "(", ")", "[", "]", "{", "}", "\"", "“", "”",
+        "，", "。", "！", "？", "；", "：", "、", "（", "）", "【", "】", "《", "》", "「", "」", "『", "』",
     ]
+    static let listSeparators: Set<Character> = [",", "，", "、"]
 
     static func candidates(from revision: AutoLearnRevision,
         usesAIReviewer: Bool = AutoLearnSettings.usesAIReviewer) -> [DetectedCorrectionCandidate] {
@@ -121,7 +128,7 @@ enum CorrectionDiffEngine {
                 ? AutoLearnLocalReviewPolicy.fitsLimits(source: pair.source, destination: pair.destination)
                 : AutoLearnLocalReviewPolicy.accepts(source: pair.source, destination: pair.destination)
             guard pair.source != pair.destination, eligible,
-                !pair.source.contains(","),
+                !pair.source.contains(where: { listSeparators.contains($0) }),
                 pair.source.count <= AutoLearnLimits.maximumCandidateCharacters,
                 pair.destination.count <= AutoLearnLimits.maximumCandidateCharacters,
                 isWithinUnspacedPrivacyLimit(pair.source, pair.destination),
@@ -153,48 +160,95 @@ enum CorrectionDiffEngine {
         return results
     }
 
+    /// Splits text into words. Spaced scripts split on whitespace and punctuation.
+    /// Scripts written without spaces (Chinese, Japanese, Thai, ...) are split into
+    /// words by the system tokenizer, so a correction inside a sentence becomes a
+    /// word-level change instead of a whole-clause one.
     private static func segments(in text: String) -> [TextSegment] {
         var results: [TextSegment] = []
         var segmentStart: String.Index?
+        var segmentIsCompact = false
+        var tokenizer: NLTokenizer?
         var index = text.startIndex
+
+        func finishSegment(at end: String.Index) {
+            guard let start = segmentStart else { return }
+            segmentStart = nil
+            let range = start..<end
+            guard segmentIsCompact else {
+                results.append(TextSegment(text: String(text[range]), range: range, isBoundary: false))
+                return
+            }
+            if tokenizer == nil {
+                let created = NLTokenizer(unit: .word)
+                created.string = text
+                tokenizer = created
+            }
+            for wordRange in compactWordRanges(in: range, of: text, tokenizer: tokenizer!) {
+                results.append(TextSegment(text: String(text[wordRange]), range: wordRange, isBoundary: false))
+            }
+        }
 
         while index < text.endIndex {
             let character = text[index]
             if character.isWhitespace {
-                if let start = segmentStart {
-                    let range = start..<index
-                    results.append(
-                        TextSegment(text: String(text[range]), range: range, isBoundary: false)
-                    )
-                    segmentStart = nil
-                }
+                finishSegment(at: index)
             } else if isStructuralSeparator(at: index, in: text) {
-                if let start = segmentStart {
-                    let range = start..<index
-                    results.append(
-                        TextSegment(text: String(text[range]), range: range, isBoundary: false)
-                    )
-                    segmentStart = nil
-                }
-
+                finishSegment(at: index)
                 let end = text.index(after: index)
                 let range = index..<end
                 results.append(
                     TextSegment(text: String(text[range]), range: range, isBoundary: true)
                 )
-            } else if segmentStart == nil {
-                segmentStart = index
+            } else {
+                let isCompact = isCompactScriptCharacter(character)
+                if segmentStart != nil, isCompact != segmentIsCompact {
+                    finishSegment(at: index)
+                }
+                if segmentStart == nil {
+                    segmentStart = index
+                    segmentIsCompact = isCompact
+                }
             }
             index = text.index(after: index)
         }
 
-        if let start = segmentStart {
-            let range = start..<text.endIndex
-            results.append(
-                TextSegment(text: String(text[range]), range: range, isBoundary: false)
-            )
-        }
+        finishSegment(at: text.endIndex)
         return results
+    }
+
+    /// Word ranges inside `range`, which holds only compact-script characters.
+    /// Characters the tokenizer leaves out become one-character words.
+    private static func compactWordRanges(
+        in range: Range<String.Index>,
+        of text: String,
+        tokenizer: NLTokenizer
+    ) -> [Range<String.Index>] {
+        var words: [Range<String.Index>] = []
+        var covered = range.lowerBound
+        tokenizer.enumerateTokens(in: range) { token, _ in
+            let lower = max(token.lowerBound, range.lowerBound)
+            let upper = min(token.upperBound, range.upperBound)
+            guard lower < upper, lower >= covered else { return true }
+            while covered < lower {
+                let next = text.index(after: covered)
+                words.append(covered..<next)
+                covered = next
+            }
+            words.append(lower..<upper)
+            covered = upper
+            return true
+        }
+        while covered < range.upperBound {
+            let next = text.index(after: covered)
+            words.append(covered..<next)
+            covered = next
+        }
+        return words
+    }
+
+    static func isCompactScriptCharacter(_ character: Character) -> Bool {
+        character.unicodeScalars.first.map(isCompactScriptScalar) ?? false
     }
 
     private static func isStructuralSeparator(

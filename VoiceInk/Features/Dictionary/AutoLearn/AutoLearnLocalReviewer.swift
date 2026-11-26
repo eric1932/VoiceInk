@@ -45,7 +45,14 @@ enum AutoLearnLocalReviewPolicy {
                 && !term.unicodeScalars.contains {
                     CharacterSet.controlCharacters.contains($0) || CharacterSet.newlines.contains($0)
                 }
-        } && original?.contains(",") != true && original != target
+        } && original?.contains(where: { CorrectionDiffEngine.listSeparators.contains($0) }) != true
+            && original != target && !(original.map(isSingleCompactCharacter) ?? false)
+    }
+
+    /// A rule for one Chinese or Japanese character (的 → 地) would rewrite that
+    /// character everywhere it appears, so such corrections are not learned.
+    private static func isSingleCompactCharacter(_ text: String) -> Bool {
+        text.count == 1 && text.first.map(CorrectionDiffEngine.isCompactScriptCharacter) == true
     }
 
     private static let functionWords = Set("""
